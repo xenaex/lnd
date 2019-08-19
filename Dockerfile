@@ -1,37 +1,26 @@
-FROM golang:alpine as builder
+FROM golang:1.12.4 as lnd-builder
+LABEL stage="lnd-builder"
 
-# Force Go to use the cgo based DNS resolver. This is required to ensure DNS
-# queries required to connect to linked containers succeed.
-ENV GODEBUG netdns=cgo
+ARG USER
+ARG PASS
 
-# Install dependencies and build the binaries.
-RUN apk add --no-cache --update alpine-sdk \
-    git \
-    make \
-    gcc \
-&&  git clone https://github.com/lightningnetwork/lnd /go/src/github.com/lightningnetwork/lnd \
-&&  cd /go/src/github.com/lightningnetwork/lnd \
-&&  make \
-&&  make install tags="signrpc walletrpc chainrpc invoicesrpc routerrpc"
+RUN git clone https://"${USER}:${PASS}"@github.com/xenaex/lnd.git && \
+    cd lnd && \
+    go get && \
+    make install
 
-# Start a new, final image.
-FROM alpine as final
+# Image to use
+FROM ubuntu:xenial
 
-# Define a root volume for data persistence.
-VOLUME /root/.lnd
+RUN mkdir -p /blockchain/data/chain/bitcoin/testnet /blockchain/data/chain/bitcoin/mainnet
 
-# Add bash and ca-certs, for quality of life and SSL-related reasons.
-RUN apk --no-cache add \
-    bash \
-    ca-certificates
+COPY --from=lnd-builder /go/bin/lnd   /usr/local/bin/lnd
+COPY --from=lnd-builder /go/bin/lncli /usr/local/bin/lncli
 
-# Copy the binaries from the builder image.
-COPY --from=builder /go/bin/lncli /bin/
-COPY --from=builder /go/bin/lnd /bin/
+ENV LIGHTNING_DATA=/blockchain/
 
-# Expose lnd ports (p2p, rpc).
-EXPOSE 9735 10009
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+ENTRYPOINT ["/docker-entrypoint.sh"]
+EXPOSE 9735 10009 8080
 
-# Specify the start command and entrypoint as the lnd daemon.
-ENTRYPOINT ["lnd"]
 CMD ["lnd"]
